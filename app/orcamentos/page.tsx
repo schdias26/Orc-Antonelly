@@ -25,7 +25,8 @@ import { generateOrcamentoPDF, downloadPDF } from "@/lib/pdf-generator"
 import { getStoredFiles, deleteStoredFiles } from "@/lib/file-storage"
 import { PastaManager } from "@/components/pasta-manager"
 // Adicionar as instruções de uso e melhorar a navegação
-import { InstrucoesUso } from "@/components/instrucoes-uso"
+// Remover esta linha:
+// import { InstrucoesUso } from "@/components/instrucoes-uso"
 
 export default function ListarOrcamentos() {
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([])
@@ -211,7 +212,8 @@ export default function ListarOrcamentos() {
 
       {/* No JSX, atualizar a seção principal */}
       <main className="max-w-7xl mx-auto px-6 py-12">
-        <InstrucoesUso />
+        {/* Remover esta linha do JSX: */}
+        {/* <InstrucoesUso /> */}
 
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-green-800 mb-4">{getDisplayTitle()}</h1>

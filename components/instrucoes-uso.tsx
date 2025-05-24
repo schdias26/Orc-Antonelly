@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Info, Users, Globe, Smartphone, Folder, FileText } from "lucide-react"
+import { Info, Users, Smartphone, Folder, FileText } from "lucide-react"
 
 export function InstrucoesUso() {
   return (
@@ -17,17 +17,6 @@ export function InstrucoesUso() {
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="flex items-start space-x-3">
-              <Globe className="w-5 h-5 text-blue-600 mt-0.5" />
-              <div>
-                <h4 className="font-medium text-blue-800">Acesso Público</h4>
-                <p className="text-sm text-blue-700">
-                  Compartilhe o link deste sistema com qualquer pessoa. Todos podem criar, visualizar e gerenciar
-                  orçamentos.
-                </p>
-              </div>
-            </div>
-
             <div className="flex items-start space-x-3">
               <Smartphone className="w-5 h-5 text-blue-600 mt-0.5" />
               <div>
