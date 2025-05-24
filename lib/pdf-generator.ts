@@ -55,7 +55,7 @@ export async function generateOrcamentoPDF(
     pdf.setFontSize(14)
     pdf.setFont("helvetica", "bold")
     pdf.setTextColor(34, 197, 94)
-    pdf.text("DADOS DO ORÇAMENTO", 20, yPosition)
+    pdf.text("DADOS PARA PAGAMENTO", 20, yPosition)
     yPosition += 10
 
     // Resetar cor
@@ -110,57 +110,19 @@ export async function generateOrcamentoPDF(
       tableWidth: "auto",
     })
 
-    // Adicionar seção de anexos se existirem
-    if (anexos && anexos.length > 0) {
-      // Get the final Y position from the last table
-      const finalY = (pdf as any).lastAutoTable?.finalY || yPosition + 100
+    // Rodapé
+    const finalY = (pdf as any).lastAutoTable?.finalY || yPosition + 100
 
-      pdf.setFontSize(14)
-      pdf.setFont("helvetica", "bold")
-      pdf.setTextColor(34, 197, 94)
-      pdf.text("ANEXOS", 20, finalY + 20)
+    // Linha separadora do rodapé
+    pdf.setDrawColor(34, 197, 94)
+    pdf.setLineWidth(0.5)
+    pdf.line(20, finalY + 20, pdf.internal.pageSize.width - 20, finalY + 20)
 
-      pdf.setTextColor(0, 0, 0)
-      pdf.setFontSize(10)
-      pdf.setFont("helvetica", "normal")
-
-      anexos.forEach((anexo, index) => {
-        const yPos = finalY + 35 + index * 8
-        if (yPos > pdf.internal.pageSize.height - 30) {
-          pdf.addPage()
-          pdf.text(`${index + 1}. ${anexo.name} (${(anexo.size / 1024).toFixed(1)} KB)`, 20, 30)
-        } else {
-          pdf.text(`${index + 1}. ${anexo.name} (${(anexo.size / 1024).toFixed(1)} KB)`, 20, yPos)
-        }
-      })
-    }
-
-    // Rodapé em todas as páginas
-    const pageCount = pdf.getNumberOfPages()
-    const dataRodape = new Date()
-    const dataFormatadaRodape = dataRodape.toLocaleDateString("pt-BR")
-
-    for (let i = 1; i <= pageCount; i++) {
-      pdf.setPage(i)
-
-      // Linha separadora do rodapé
-      pdf.setDrawColor(34, 197, 94)
-      pdf.setLineWidth(0.5)
-      pdf.line(
-        20,
-        pdf.internal.pageSize.height - 20,
-        pdf.internal.pageSize.width - 20,
-        pdf.internal.pageSize.height - 20,
-      )
-
-      // Texto do rodapé
-      pdf.setFontSize(8)
-      pdf.setTextColor(100, 100, 100)
-      pdf.text(`Antonelly Construções e Serviços - Página ${i} de ${pageCount}`, 20, pdf.internal.pageSize.height - 10)
-
-      // Data/hora no rodapé direito
-      pdf.text(`Gerado em ${dataFormatadaRodape}`, pdf.internal.pageSize.width - 60, pdf.internal.pageSize.height - 10)
-    }
+    // Texto do rodapé
+    pdf.setFontSize(8)
+    pdf.setTextColor(100, 100, 100)
+    pdf.text("Antonelly Construções e Serviços", 20, finalY + 30)
+    pdf.text(`Gerado em ${dataFormatada}`, pdf.internal.pageSize.width - 60, finalY + 30)
 
     return pdf.output("blob")
   } catch (error) {
