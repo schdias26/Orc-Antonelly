@@ -1,7 +1,6 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Info, Users, Smartphone, Folder, FileText } from "lucide-react"
 
 export function InstrucoesUso() {
@@ -11,7 +10,6 @@ export function InstrucoesUso() {
         <CardTitle className="text-blue-800 flex items-center">
           <Info className="w-5 h-5 mr-2" />
           Como usar este sistema
-          <Badge className="ml-2 bg-blue-100 text-blue-800">Público</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
