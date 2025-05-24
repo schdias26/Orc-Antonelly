@@ -2,18 +2,32 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Logo } from "@/components/logo"
 import { FileUpload } from "@/components/file-upload"
-import { saveOrcamento, getOrcamentos, checkDuplicateOrcamento } from "@/lib/orcamentos"
+import {
+  saveOrcamento,
+  getOrcamentos,
+  checkDuplicateOrcamento,
+  formatCurrency,
+  parseCurrency,
+  generatePDFFileName,
+  getPastas,
+  type Pasta,
+} from "@/lib/orcamentos"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { CheckCircle, AlertCircle } from "lucide-react"
+import { CheckCircle, AlertCircle, Wifi, WifiOff } from "lucide-react"
 import { generateOrcamentoPDF } from "@/lib/pdf-generator"
+import { storeFiles } from "@/lib/file-storage"
 import type { FileWithPreview } from "@/components/file-upload"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+// Adicionar as instruções de uso no topo da página
+import { InstrucoesUso } from "@/components/instrucoes-uso"
 
 export default function QuoteSystem() {
   const [formData, setFormData] = useState({
@@ -33,10 +47,55 @@ export default function QuoteSystem() {
   const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [anexos, setAnexos] = useState<FileWithPreview[]>([])
+  const [isOnline, setIsOnline] = useState(true)
+  const [selectedPastaId, setSelectedPastaId] = useState<string | null>(null)
+  const [pastas, setPastas] = useState<Pasta[]>([])
+
+  // Monitorar status de conexão
+  useEffect(() => {
+    const updateOnlineStatus = () => {
+      setIsOnline(navigator.onLine)
+    }
+
+    window.addEventListener("online", updateOnlineStatus)
+    window.addEventListener("offline", updateOnlineStatus)
+
+    return () => {
+      window.removeEventListener("online", updateOnlineStatus)
+      window.removeEventListener("offline", updateOnlineStatus)
+    }
+  }, [])
+
+  // Registrar Service Worker para funcionamento offline
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((registration) => {
+          console.log("SW registrado com sucesso:", registration)
+        })
+        .catch((error) => {
+          console.log("Falha ao registrar SW:", error)
+        })
+    }
+  }, [])
+
+  useEffect(() => {
+    const loadedPastas = getPastas()
+    setPastas(loadedPastas)
+  }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+
+    if (name === "valor") {
+      // Formatação automática de moeda
+      const numericValue = parseCurrency(value)
+      const formattedValue = formatCurrency(numericValue)
+      setFormData((prev) => ({ ...prev, [name]: formattedValue }))
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }))
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,7 +110,7 @@ export default function QuoteSystem() {
       return
     }
 
-    const valor = Number.parseFloat(formData.valor.replace(/[^\d,]/g, "").replace(",", "."))
+    const valor = parseCurrency(formData.valor)
     if (isNaN(valor) || valor <= 0) {
       setAlert({ type: "error", message: "Por favor, insira um valor válido." })
       setIsSubmitting(false)
@@ -62,19 +121,13 @@ export default function QuoteSystem() {
 
     // Verificar duplicatas antes de salvar
     const existingOrcamentos = getOrcamentos()
-    const duplicateCheck = checkDuplicateOrcamento(
-      existingOrcamentos,
-      formData.servico,
-      formData.favorecido,
-      valor,
-      dataEnvio,
-    )
+    const duplicateCheck = checkDuplicateOrcamento(existingOrcamentos, formData.servico, formData.favorecido, dataEnvio)
 
     if (duplicateCheck.isDuplicate) {
       const existing = duplicateCheck.existingOrcamento!
       setAlert({
         type: "error",
-        message: `❌ ORÇAMENTO BLOQUEADO! Já existe um orçamento idêntico (ID: ${existing.id}) criado em ${new Date(existing.dataEnvio).toLocaleDateString("pt-BR")}. Mesmo fornecedor, serviço e valor não podem ser repetidos no mesmo mês.`,
+        message: `❌ ORÇAMENTO BLOQUEADO! Já existe um orçamento idêntico (ID: ${existing.id}) criado em ${new Date(existing.dataEnvio).toLocaleDateString("pt-BR")}. Mesmo fornecedor e serviço não podem ser repetidos no mesmo dia.`,
       })
       setIsSubmitting(false)
       return
@@ -82,31 +135,43 @@ export default function QuoteSystem() {
 
     const orcamentoData = {
       ...formData,
+      pastaId: selectedPastaId,
       valor,
+      valorFormatado: formatCurrency(valor),
       anexos: anexos.map((file) => file.name),
       dataEnvio,
       status: "Pendente" as const,
     }
 
     try {
-      // Gerar PDF
-      const pdfBlob = await generateOrcamentoPDF(orcamentoData, anexos)
-
-      // Salvar orçamento
+      // Salvar orçamento primeiro para obter ID
       const result = saveOrcamento(orcamentoData)
 
-      if (result.success) {
+      if (result.success && result.id) {
+        // Armazenar arquivos anexados
+        const storedFiles = await storeFiles(result.id, anexos)
+
+        // Gerar PDF com anexos
+        const pdfBlob = await generateOrcamentoPDF(orcamentoData, storedFiles, result.id)
+
+        // Gerar nome do arquivo
+        const orcamentoCompleto = { ...orcamentoData, id: result.id }
+        const fileName = generatePDFFileName(orcamentoCompleto)
+
         // Download do PDF
         const url = URL.createObjectURL(pdfBlob)
         const a = document.createElement("a")
         a.href = url
-        a.download = `orcamento-${result.id}.pdf`
+        a.download = fileName
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
 
-        setAlert({ type: "success", message: `✅ ${result.message} PDF gerado com sucesso! ID: ${result.id}` })
+        setAlert({
+          type: "success",
+          message: `✅ ${result.message} PDF gerado: ${fileName}. ${anexos.length > 0 ? `${anexos.length} arquivo(s) anexado(s).` : ""}`,
+        })
 
         // Limpar formulário
         setFormData({
@@ -138,15 +203,35 @@ export default function QuoteSystem() {
       {/* Header */}
       <header className="bg-white border-b border-green-200 px-6 py-4">
         <div className="max-w-7xl mx-auto">
-          <Logo />
+          <div className="flex items-center justify-between">
+            <Logo />
+            <div className="flex items-center space-x-2">
+              {isOnline ? (
+                <div className="flex items-center text-green-600">
+                  <Wifi className="w-4 h-4 mr-1" />
+                  <span className="text-sm">Online</span>
+                </div>
+              ) : (
+                <div className="flex items-center text-orange-600">
+                  <WifiOff className="w-4 h-4 mr-1" />
+                  <span className="text-sm">Offline</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-12">
+        <InstrucoesUso />
+
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-green-800 mb-4">Sistema de Orçamentos</h1>
           <p className="text-green-700">Preencha os dados abaixo para enviar um novo orçamento</p>
+          <p className="text-sm text-green-600 mt-2">
+            💡 Funciona 100% offline - seus dados ficam salvos no dispositivo
+          </p>
         </div>
 
         {alert && (
@@ -183,6 +268,28 @@ export default function QuoteSystem() {
                 placeholder="Ex: IP4 Barcelos"
                 className="mt-1 border-green-200 focus:border-green-500 focus:ring-green-500"
               />
+            </div>
+
+            <div>
+              <Label htmlFor="pasta" className="text-green-800 font-medium">
+                Pasta (Organização)
+              </Label>
+              <Select
+                value={selectedPastaId || "sem-pasta"}
+                onValueChange={(value) => setSelectedPastaId(value === "sem-pasta" ? null : value)}
+              >
+                <SelectTrigger className="mt-1 border-green-200 focus:border-green-500 focus:ring-green-500">
+                  <SelectValue placeholder="Selecione uma pasta (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sem-pasta">Sem pasta</SelectItem>
+                  {pastas.map((pasta) => (
+                    <SelectItem key={pasta.id} value={pasta.id}>
+                      {pasta.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
@@ -323,13 +430,12 @@ export default function QuoteSystem() {
                 name="valor"
                 value={formData.valor}
                 onChange={handleInputChange}
-                placeholder="Ex: 1500,00"
+                placeholder="Ex: R$ 1.500,00"
                 className="mt-1 border-green-200 focus:border-green-500 focus:ring-green-500"
                 required
               />
             </div>
 
-            {/* Substitua a div de anexos estática pelo componente FileUpload */}
             <FileUpload onFilesChange={setAnexos} />
 
             <div className="flex justify-end space-x-4 pt-6">

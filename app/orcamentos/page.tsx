@@ -7,9 +7,25 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Eye, Edit, Trash2, Calendar, Filter } from "lucide-react"
+import { Trash2, Calendar, Filter, FileText, Download, Wifi, WifiOff } from "lucide-react"
 import { Logo } from "@/components/logo"
-import { getOrcamentos, updateOrcamentoStatus, deleteOrcamento, type Orcamento } from "@/lib/orcamentos"
+import { AnexosDisplay } from "@/components/anexos-display"
+import {
+  getOrcamentos,
+  updateOrcamentoStatus,
+  deleteOrcamento,
+  generatePDFFileName,
+  type Orcamento,
+  getOrcamentosByPasta,
+  moveOrcamentoToPasta,
+  getPastas,
+  type Pasta,
+} from "@/lib/orcamentos"
+import { generateOrcamentoPDF, downloadPDF } from "@/lib/pdf-generator"
+import { getStoredFiles, deleteStoredFiles } from "@/lib/file-storage"
+import { PastaManager } from "@/components/pasta-manager"
+// Adicionar as instruções de uso e melhorar a navegação
+import { InstrucoesUso } from "@/components/instrucoes-uso"
 
 export default function ListarOrcamentos() {
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([])
@@ -20,18 +36,49 @@ export default function ListarOrcamentos() {
     status: "",
     favorecido: "",
   })
+  const [loadingPdf, setLoadingPdf] = useState<string | null>(null)
+  const [isOnline, setIsOnline] = useState(true)
+  const [selectedPastaId, setSelectedPastaId] = useState<string | null>(null)
+  const [pastas, setPastas] = useState<Pasta[]>([])
+
+  // Monitorar status de conexão
+  useEffect(() => {
+    const updateOnlineStatus = () => {
+      setIsOnline(navigator.onLine)
+    }
+
+    window.addEventListener("online", updateOnlineStatus)
+    window.addEventListener("offline", updateOnlineStatus)
+
+    return () => {
+      window.removeEventListener("online", updateOnlineStatus)
+      window.removeEventListener("offline", updateOnlineStatus)
+    }
+  }, [])
 
   useEffect(() => {
     loadOrcamentos()
-  }, [])
+    const loadedPastas = getPastas()
+    setPastas(loadedPastas)
+  }, [selectedPastaId])
 
   useEffect(() => {
     applyFilters()
   }, [orcamentos, filters])
 
+  // Atualizar para mostrar melhor as estatísticas por pasta
   const loadOrcamentos = () => {
-    const data = getOrcamentos()
+    const data = selectedPastaId ? getOrcamentosByPasta(selectedPastaId) : getOrcamentos()
     setOrcamentos(data)
+  }
+
+  // Adicionar função para obter título da exibição
+  const getDisplayTitle = () => {
+    if (selectedPastaId) {
+      const pasta = pastas.find((p) => p.id === selectedPastaId)
+      return pasta ? `Orçamentos - ${pasta.nome}` : "Orçamentos"
+    }
+    return "Todos os Orçamentos"
   }
 
   const applyFilters = () => {
@@ -63,10 +110,51 @@ export default function ListarOrcamentos() {
   }
 
   const handleDelete = (id: string) => {
-    if (confirm("Tem certeza que deseja excluir este orçamento?")) {
+    if (confirm("Tem certeza que deseja excluir este orçamento? Esta ação não pode ser desfeita.")) {
       if (deleteOrcamento(id)) {
+        // Deletar também os arquivos anexados
+        deleteStoredFiles(id)
         loadOrcamentos()
       }
+    }
+  }
+
+  const handleDownloadPDF = async (orcamento: Orcamento) => {
+    setLoadingPdf(orcamento.id)
+
+    try {
+      // Buscar arquivos anexados
+      const storedFiles = getStoredFiles(orcamento.id)
+
+      // Regenerar PDF com anexos
+      const pdfBlob = await generateOrcamentoPDF(
+        {
+          ip4: orcamento.ip4,
+          solicitante: orcamento.solicitante,
+          servico: orcamento.servico,
+          favorecido: orcamento.favorecido,
+          telefone: orcamento.telefone,
+          cpfCnpj: orcamento.cpfCnpj,
+          banco: orcamento.banco,
+          agencia: orcamento.agencia,
+          conta: orcamento.conta,
+          pix: orcamento.pix,
+          valor: orcamento.valor,
+          valorFormatado: orcamento.valorFormatado,
+          anexos: orcamento.anexos,
+          dataEnvio: orcamento.dataEnvio,
+        },
+        storedFiles,
+        orcamento.id,
+      )
+
+      const fileName = generatePDFFileName(orcamento)
+      downloadPDF(pdfBlob, fileName)
+    } catch (error) {
+      console.error("Erro ao gerar PDF:", error)
+      alert("Erro ao gerar PDF. Tente novamente.")
+    } finally {
+      setLoadingPdf(null)
     }
   }
 
@@ -92,19 +180,60 @@ export default function ListarOrcamentos() {
     }
   }
 
+  const handleMoveToPasta = (orcamentoId: string, novaPastaId: string | null) => {
+    if (moveOrcamentoToPasta(orcamentoId, novaPastaId)) {
+      loadOrcamentos()
+    }
+  }
+
   return (
     <div className="min-h-screen bg-green-50">
       <header className="bg-white border-b border-green-200 px-6 py-4">
         <div className="max-w-7xl mx-auto">
-          <Logo />
+          <div className="flex items-center justify-between">
+            <Logo />
+            <div className="flex items-center space-x-2">
+              {isOnline ? (
+                <div className="flex items-center text-green-600">
+                  <Wifi className="w-4 h-4 mr-1" />
+                  <span className="text-sm">Online</span>
+                </div>
+              ) : (
+                <div className="flex items-center text-orange-600">
+                  <WifiOff className="w-4 h-4 mr-1" />
+                  <span className="text-sm">Offline</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
+      {/* No JSX, atualizar a seção principal */}
       <main className="max-w-7xl mx-auto px-6 py-12">
+        <InstrucoesUso />
+
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-green-800 mb-4">Orçamentos Salvos</h1>
-          <p className="text-green-700">Gerencie e filtre todos os orçamentos do sistema</p>
+          <h1 className="text-3xl font-bold text-green-800 mb-4">{getDisplayTitle()}</h1>
+          <p className="text-green-700">
+            {selectedPastaId
+              ? "Gerencie os orçamentos desta pasta"
+              : "Gerencie e filtre todos os orçamentos do sistema"}
+          </p>
+          <p className="text-sm text-green-600 mt-2">📱 Funciona 100% offline - dados salvos localmente</p>
+          {selectedPastaId && (
+            <Button
+              onClick={() => setSelectedPastaId(null)}
+              variant="outline"
+              className="mt-2 border-green-600 text-green-600"
+            >
+              ← Voltar para todos os orçamentos
+            </Button>
+          )}
         </div>
+
+        {/* Gerenciador de Pastas */}
+        <PastaManager onPastaSelect={setSelectedPastaId} selectedPastaId={selectedPastaId} />
 
         {/* Filtros */}
         <Card className="mb-8 border-green-200">
@@ -146,7 +275,7 @@ export default function ListarOrcamentos() {
                 </Label>
                 <Select
                   value={filters.status}
-                  onValueChange={(value) => setFilters((prev) => ({ ...prev, status: value }))}
+                  onValueChange={(value) => setFilters((prev) => ({ ...prev, status: value === "todos" ? "" : value }))}
                 >
                   <SelectTrigger className="border-green-200 focus:border-green-500">
                     <SelectValue placeholder="Todos os status" />
@@ -215,10 +344,9 @@ export default function ListarOrcamentos() {
             <CardContent className="p-4">
               <div className="text-center">
                 <p className="text-2xl font-bold text-green-800">
-                  R${" "}
                   {filteredOrcamentos
                     .reduce((sum, o) => sum + o.valor, 0)
-                    .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    .toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </p>
                 <p className="text-sm text-green-600">Valor Total</p>
               </div>
@@ -240,7 +368,7 @@ export default function ListarOrcamentos() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-green-800">ID: {orcamento.id}</CardTitle>
+                      <CardTitle className="text-green-800 text-sm">ID: {orcamento.id}</CardTitle>
                       <p className="text-sm text-gray-500 flex items-center mt-1">
                         <Calendar className="w-4 h-4 mr-1" />
                         {new Date(orcamento.dataEnvio).toLocaleDateString("pt-BR")}
@@ -266,7 +394,7 @@ export default function ListarOrcamentos() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                     <div>
                       <p className="text-sm font-medium text-green-800">Solicitante</p>
                       <p className="text-gray-600">{orcamento.solicitante || "N/A"}</p>
@@ -284,22 +412,36 @@ export default function ListarOrcamentos() {
                     <div>
                       <p className="text-sm font-medium text-green-800">Valor</p>
                       <p className="text-gray-600 font-semibold">
-                        R$ {orcamento.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        {orcamento.valorFormatado ||
+                          orcamento.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                       </p>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-green-800">Telefone</p>
-                      <p className="text-gray-600">{orcamento.telefone || "N/A"}</p>
-                    </div>
                   </div>
+
+                  {/* Seção de Anexos */}
+                  <div className="mb-4">
+                    <AnexosDisplay orcamentoId={orcamento.id} />
+                  </div>
+
                   <div className="flex space-x-2">
-                    <Button size="sm" variant="outline" className="border-green-600 text-green-600 hover:bg-green-50">
-                      <Eye className="w-4 h-4 mr-1" />
-                      Ver Detalhes
-                    </Button>
-                    <Button size="sm" variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
-                      <Edit className="w-4 h-4 mr-1" />
-                      Editar
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-green-600 text-green-600 hover:bg-green-50"
+                      onClick={() => handleDownloadPDF(orcamento)}
+                      disabled={loadingPdf === orcamento.id}
+                    >
+                      {loadingPdf === orcamento.id ? (
+                        <>
+                          <Download className="w-4 h-4 mr-1 animate-spin" />
+                          Gerando...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-4 h-4 mr-1" />
+                          Baixar PDF
+                        </>
+                      )}
                     </Button>
                     <Button
                       size="sm"
@@ -310,6 +452,26 @@ export default function ListarOrcamentos() {
                       <Trash2 className="w-4 h-4 mr-1" />
                       Excluir
                     </Button>
+                  </div>
+
+                  <div className="mt-2">
+                    <Label className="text-sm text-green-800">Mover para pasta:</Label>
+                    <Select
+                      value={orcamento.pastaId || "sem-pasta"}
+                      onValueChange={(value) => handleMoveToPasta(orcamento.id, value === "sem-pasta" ? null : value)}
+                    >
+                      <SelectTrigger className="w-full mt-1">
+                        <SelectValue placeholder="Selecione uma pasta" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sem-pasta">Sem pasta</SelectItem>
+                        {pastas.map((pasta) => (
+                          <SelectItem key={pasta.id} value={pasta.id}>
+                            {pasta.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </CardContent>
               </Card>

@@ -1,0 +1,16 @@
+{
+  "name": "Antonelly Orçamentos",
+  "short_name": "Orçamentos",
+  "description": "Sistema de Orçamentos Antonelly Construções e Serviços",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0fdf4",
+  "theme_color": "#22c55e",
+  "icons": [
+    {
+      "src": "/logo-antonelly.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
