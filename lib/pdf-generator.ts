@@ -1,14 +1,7 @@
 import jsPDF from "jspdf"
-import "jspdf-autotable"
+import autoTable from "jspdf-autotable"
 import type { Orcamento } from "./orcamentos"
 import type { StoredFile } from "./file-storage"
-
-// Declarar o tipo para jsPDF com autoTable
-declare module "jspdf" {
-  interface jsPDF {
-    autoTable: (options: any) => jsPDF
-  }
-}
 
 export async function generateOrcamentoPDF(
   orcamento: Omit<Orcamento, "id" | "status">,
@@ -90,7 +83,7 @@ export async function generateOrcamentoPDF(
     ]
 
     // Criar tabela com os dados usando autoTable
-    pdf.autoTable({
+    autoTable(pdf, {
       startY: yPosition,
       head: [["Campo", "Informação"]],
       body: dados,
@@ -119,7 +112,8 @@ export async function generateOrcamentoPDF(
 
     // Adicionar seção de anexos se existirem
     if (anexos && anexos.length > 0) {
-      const finalY = (pdf as any).lastAutoTable.finalY || yPosition + 100
+      // Get the final Y position from the last table
+      const finalY = (pdf as any).lastAutoTable?.finalY || yPosition + 100
 
       pdf.setFontSize(14)
       pdf.setFont("helvetica", "bold")
