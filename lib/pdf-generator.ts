@@ -3,14 +3,21 @@ import "jspdf-autotable"
 import type { Orcamento } from "./orcamentos"
 import type { StoredFile } from "./file-storage"
 
+// Declarar o tipo para jsPDF com autoTable
+declare module "jspdf" {
+  interface jsPDF {
+    autoTable: (options: any) => jsPDF
+  }
+}
+
 export async function generateOrcamentoPDF(
   orcamento: Omit<Orcamento, "id" | "status">,
   anexos: StoredFile[] = [],
   orcamentoId?: string,
 ): Promise<Blob> {
-  const pdf = new jsPDF()
-
   try {
+    const pdf = new jsPDF()
+
     // Configurar fundo verde claro
     pdf.setFillColor(240, 253, 244)
     pdf.rect(0, 0, pdf.internal.pageSize.width, pdf.internal.pageSize.height, "F")
@@ -25,7 +32,7 @@ export async function generateOrcamentoPDF(
     pdf.setFont("helvetica", "bold")
     pdf.text("ANTONELLY CONSTRUÇÕES E SERVIÇOS", 20, 15)
 
-    // Título simplificado
+    // Subtítulo
     pdf.setFontSize(14)
     pdf.text("ORÇAMENTO", 20, 25)
 
@@ -61,27 +68,29 @@ export async function generateOrcamentoPDF(
     // Resetar cor
     pdf.setTextColor(0, 0, 0)
 
-    // Preparar dados para a tabela
+    // Preparar dados para a tabela - garantir que todos os valores sejam strings
     const dados = [
-      ["IP4", orcamento.ip4 || "Não informado"],
-      ["Solicitante", orcamento.solicitante || "Não informado"],
-      ["Serviço", orcamento.servico || "Não informado"],
-      ["Favorecido", orcamento.favorecido || "Não informado"],
-      ["Telefone", orcamento.telefone || "Não informado"],
-      ["CPF/CNPJ", orcamento.cpfCnpj || "Não informado"],
-      ["Banco", orcamento.banco || "Não informado"],
-      ["Agência", orcamento.agencia || "Não informado"],
-      ["Conta", orcamento.conta || "Não informado"],
-      ["PIX", orcamento.pix || "Não informado"],
+      ["IP4", String(orcamento.ip4 || "Não informado")],
+      ["Solicitante", String(orcamento.solicitante || "Não informado")],
+      ["Serviço", String(orcamento.servico || "Não informado")],
+      ["Favorecido", String(orcamento.favorecido || "Não informado")],
+      ["Telefone", String(orcamento.telefone || "Não informado")],
+      ["CPF/CNPJ", String(orcamento.cpfCnpj || "Não informado")],
+      ["Banco", String(orcamento.banco || "Não informado")],
+      ["Agência", String(orcamento.agencia || "Não informado")],
+      ["Conta", String(orcamento.conta || "Não informado")],
+      ["PIX", String(orcamento.pix || "Não informado")],
       [
         "Valor",
-        orcamento.valorFormatado || `R$ ${orcamento.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        String(
+          orcamento.valorFormatado || `R$ ${orcamento.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        ),
       ],
-      ["Data de Envio", new Date(orcamento.dataEnvio).toLocaleDateString("pt-BR")],
+      ["Data de Envio", String(new Date(orcamento.dataEnvio).toLocaleDateString("pt-BR"))],
     ]
 
-    // Criar tabela com os dados
-    ;(pdf as any).autoTable({
+    // Criar tabela com os dados usando autoTable
+    pdf.autoTable({
       startY: yPosition,
       head: [["Campo", "Informação"]],
       body: dados,
@@ -107,6 +116,30 @@ export async function generateOrcamentoPDF(
       margin: { left: 20, right: 20 },
       tableWidth: "auto",
     })
+
+    // Adicionar seção de anexos se existirem
+    if (anexos && anexos.length > 0) {
+      const finalY = (pdf as any).lastAutoTable.finalY || yPosition + 100
+
+      pdf.setFontSize(14)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(34, 197, 94)
+      pdf.text("ANEXOS", 20, finalY + 20)
+
+      pdf.setTextColor(0, 0, 0)
+      pdf.setFontSize(10)
+      pdf.setFont("helvetica", "normal")
+
+      anexos.forEach((anexo, index) => {
+        const yPos = finalY + 35 + index * 8
+        if (yPos > pdf.internal.pageSize.height - 30) {
+          pdf.addPage()
+          pdf.text(`${index + 1}. ${anexo.name} (${(anexo.size / 1024).toFixed(1)} KB)`, 20, 30)
+        } else {
+          pdf.text(`${index + 1}. ${anexo.name} (${(anexo.size / 1024).toFixed(1)} KB)`, 20, yPos)
+        }
+      })
+    }
 
     // Rodapé em todas as páginas
     const pageCount = pdf.getNumberOfPages()
@@ -137,7 +170,7 @@ export async function generateOrcamentoPDF(
 
     return pdf.output("blob")
   } catch (error) {
-    console.error("Erro ao gerar PDF:", error)
+    console.error("Erro detalhado ao gerar PDF:", error)
 
     // Criar PDF de erro como fallback
     const errorPdf = new jsPDF()
@@ -151,6 +184,11 @@ export async function generateOrcamentoPDF(
     errorPdf.setFontSize(12)
     errorPdf.setTextColor(0, 0, 0)
     errorPdf.text("Tente novamente ou contate o suporte.", 20, 70)
+
+    if (error instanceof Error) {
+      errorPdf.setFontSize(10)
+      errorPdf.text(`Erro: ${error.message}`, 20, 90)
+    }
 
     return errorPdf.output("blob")
   }
