@@ -9,25 +9,15 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Logo } from "@/components/logo"
 import { FileUpload } from "@/components/file-upload"
-import {
-  saveOrcamento,
-  getOrcamentos,
-  checkDuplicateOrcamento,
-  formatCurrency,
-  parseCurrency,
-  generatePDFFileName,
-  getPastas,
-  type Pasta,
-} from "@/lib/orcamentos"
+import { UserPresence } from "@/components/user-presence"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { CheckCircle, AlertCircle, Wifi, WifiOff } from "lucide-react"
-import { generateOrcamentoPDF } from "@/lib/pdf-generator"
-import { storeFiles } from "@/lib/file-storage"
-import type { FileWithPreview } from "@/components/file-upload"
+import { CheckCircle, AlertCircle } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-// Adicionar as instruções de uso no topo da página
-import { InstrucoesUso } from "@/components/instrucoes-uso"
+import { dbService } from "@/lib/database-service"
+import { realtimeService } from "@/lib/realtime-service"
+import { generateOrcamentoPDF, downloadPDF } from "@/lib/pdf-generator"
+import type { FileWithPreview } from "@/components/file-upload"
+import type { Pasta } from "@/lib/supabase"
 
 export default function QuoteSystem() {
   const [formData, setFormData] = useState({
@@ -47,55 +37,40 @@ export default function QuoteSystem() {
   const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [anexos, setAnexos] = useState<FileWithPreview[]>([])
-  const [isOnline, setIsOnline] = useState(true)
   const [selectedPastaId, setSelectedPastaId] = useState<string | null>(null)
   const [pastas, setPastas] = useState<Pasta[]>([])
 
-  // Monitorar status de conexão
   useEffect(() => {
-    const updateOnlineStatus = () => {
-      setIsOnline(navigator.onLine)
-    }
+    loadPastas()
 
-    window.addEventListener("online", updateOnlineStatus)
-    window.addEventListener("offline", updateOnlineStatus)
+    // Subscrever mudanças em pastas
+    const channel = realtimeService.subscribeToPastas((payload) => {
+      console.log("Mudança em pastas:", payload)
+      loadPastas()
+    })
 
     return () => {
-      window.removeEventListener("online", updateOnlineStatus)
-      window.removeEventListener("offline", updateOnlineStatus)
+      realtimeService.unsubscribe("pastas")
     }
   }, [])
 
-  // Registrar Service Worker para funcionamento offline
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((registration) => {
-          console.log("SW registrado com sucesso:", registration)
-        })
-        .catch((error) => {
-          console.log("Falha ao registrar SW:", error)
-        })
-    }
-  }, [])
-
-  useEffect(() => {
-    const loadedPastas = getPastas()
-    setPastas(loadedPastas)
-  }, [])
+  const loadPastas = async () => {
+    const data = await dbService.getPastas()
+    setPastas(data)
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
+    setFormData((prev) => ({ ...prev, [name]: value }))
+  }
 
-    if (name === "valor") {
-      // Formatação automática de moeda
-      const numericValue = parseCurrency(value)
-      const formattedValue = formatCurrency(numericValue)
-      setFormData((prev) => ({ ...prev, [name]: formattedValue }))
-    } else {
-      setFormData((prev) => ({ ...prev, [name]: value }))
-    }
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -110,67 +85,66 @@ export default function QuoteSystem() {
       return
     }
 
-    const valor = parseCurrency(formData.valor)
+    const valor = Number.parseFloat(formData.valor.replace(/[^\d,]/g, "").replace(",", "."))
     if (isNaN(valor) || valor <= 0) {
       setAlert({ type: "error", message: "Por favor, insira um valor válido." })
       setIsSubmitting(false)
       return
     }
 
-    const dataEnvio = new Date().toISOString().split("T")[0]
-
-    // Verificar duplicatas antes de salvar
-    const existingOrcamentos = getOrcamentos()
-    const duplicateCheck = checkDuplicateOrcamento(existingOrcamentos, formData.servico, formData.favorecido, dataEnvio)
-
-    if (duplicateCheck.isDuplicate) {
-      const existing = duplicateCheck.existingOrcamento!
-      setAlert({
-        type: "error",
-        message: `❌ ORÇAMENTO BLOQUEADO! Já existe um orçamento idêntico (ID: ${existing.id}) criado em ${new Date(existing.dataEnvio).toLocaleDateString("pt-BR")}. Mesmo fornecedor e serviço não podem ser repetidos no mesmo dia.`,
-      })
-      setIsSubmitting(false)
-      return
-    }
-
-    const orcamentoData = {
-      ...formData,
-      pastaId: selectedPastaId,
-      valor,
-      valorFormatado: formatCurrency(valor),
-      anexos: anexos.map((file) => file.name),
-      dataEnvio,
-      status: "Pendente" as const,
-    }
-
     try {
-      // Salvar orçamento primeiro para obter ID
-      const result = saveOrcamento(orcamentoData)
+      // Criar orçamento no banco
+      const orcamentoData = {
+        pasta_id: selectedPastaId,
+        ip4: formData.ip4,
+        solicitante: formData.solicitante,
+        servico: formData.servico,
+        favorecido: formData.favorecido,
+        telefone: formData.telefone,
+        cpf_cnpj: formData.cpfCnpj,
+        banco: formData.banco,
+        agencia: formData.agencia,
+        conta: formData.conta,
+        pix: formData.pix,
+        valor,
+        valor_formatado: valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+        anexos: anexos.map((file) => file.name),
+        status: "Pendente" as const,
+      }
 
-      if (result.success && result.id) {
-        // Armazenar arquivos anexados
-        const storedFiles = await storeFiles(result.id, anexos)
+      const orcamento = await dbService.createOrcamento(orcamentoData)
 
-        // Gerar PDF com anexos
-        const pdfBlob = await generateOrcamentoPDF(orcamentoData, storedFiles, result.id)
+      if (orcamento) {
+        // Salvar arquivos anexados
+        for (const file of anexos) {
+          const dados = await fileToBase64(file)
+          await dbService.createArquivo({
+            orcamento_id: orcamento.id,
+            nome: file.name,
+            tipo: file.type,
+            tamanho: file.size,
+            dados,
+            preview: file.type.startsWith("image/") ? dados : undefined,
+          })
+        }
 
-        // Gerar nome do arquivo
-        const orcamentoCompleto = { ...orcamentoData, id: result.id }
-        const fileName = generatePDFFileName(orcamentoCompleto)
+        // Gerar PDF
+        const arquivos = await dbService.getArquivos(orcamento.id)
+        const storedFiles = arquivos.map((arquivo) => ({
+          name: arquivo.nome,
+          type: arquivo.tipo,
+          size: arquivo.tamanho,
+          data: arquivo.dados,
+          preview: arquivo.preview,
+        }))
 
-        // Download do PDF
-        const url = URL.createObjectURL(pdfBlob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = fileName
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
+        const pdfBlob = await generateOrcamentoPDF(orcamentoData, storedFiles, orcamento.id)
+        const fileName = `orcamento-${orcamento.favorecido}-${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.pdf`
+        downloadPDF(pdfBlob, fileName)
 
         setAlert({
           type: "success",
-          message: `✅ ${result.message} PDF gerado: ${fileName}. ${anexos.length > 0 ? `${anexos.length} arquivo(s) anexado(s).` : ""}`,
+          message: `✅ Orçamento criado com sucesso! PDF gerado: ${fileName}. ${anexos.length > 0 ? `${anexos.length} arquivo(s) anexado(s).` : ""}`,
         })
 
         // Limpar formulário
@@ -189,10 +163,11 @@ export default function QuoteSystem() {
         })
         setAnexos([])
       } else {
-        setAlert({ type: "error", message: result.message })
+        setAlert({ type: "error", message: "Erro ao criar orçamento." })
       }
     } catch (error) {
-      setAlert({ type: "error", message: "Erro ao gerar PDF do orçamento." })
+      console.error("Erro ao criar orçamento:", error)
+      setAlert({ type: "error", message: "Erro ao criar orçamento." })
     }
 
     setIsSubmitting(false)
@@ -203,34 +178,20 @@ export default function QuoteSystem() {
       {/* Header */}
       <header className="bg-white border-b border-green-200 px-6 py-4">
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between">
-            <Logo />
-            <div className="flex items-center space-x-2">
-              {isOnline ? (
-                <div className="flex items-center text-green-600">
-                  <Wifi className="w-4 h-4 mr-1" />
-                  <span className="text-sm">Online</span>
-                </div>
-              ) : (
-                <div className="flex items-center text-orange-600">
-                  <WifiOff className="w-4 h-4 mr-1" />
-                  <span className="text-sm">Offline</span>
-                </div>
-              )}
-            </div>
-          </div>
+          <Logo />
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-12">
-        <InstrucoesUso />
+        {/* Presença de usuários */}
+        <UserPresence currentPage="/" />
 
-        <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-green-800 mb-4">Sistema de Orçamentos</h1>
-          <p className="text-green-700">Preencha os dados abaixo para enviar um novo orçamento</p>
+        <div className="text-center mb-12 mt-6">
+          <h1 className="text-3xl font-bold text-green-800 mb-4">Sistema de Orçamentos Colaborativo</h1>
+          <p className="text-green-700">Preencha os dados abaixo para criar um novo orçamento</p>
           <p className="text-sm text-green-600 mt-2">
-            💡 Funciona 100% offline - seus dados ficam salvos no dispositivo
+            🔄 Sistema em tempo real - todas as alterações são sincronizadas automaticamente
           </p>
         </div>
 
@@ -430,7 +391,7 @@ export default function QuoteSystem() {
                 name="valor"
                 value={formData.valor}
                 onChange={handleInputChange}
-                placeholder="Ex: R$ 1.500,00"
+                placeholder="Ex: 1500.00"
                 className="mt-1 border-green-200 focus:border-green-500 focus:ring-green-500"
                 required
               />
